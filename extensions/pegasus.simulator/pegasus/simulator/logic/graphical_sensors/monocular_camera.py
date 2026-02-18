@@ -62,6 +62,7 @@ class MonocularCamera(GraphicalSensor):
         self._intrinsics = config.get("intrinsics", np.array([[958.8, 0.0, 957.8], [0.0, 956.7, 589.5], [0.0, 0.0, 1.0]]))
         self._distortion_coefficients = config.get("distortion_coefficients",[0.14, -0.03, -0.0002, -0.00003, 0.009, 0.5, -0.07, 0.017])
         self._diagonal_fov = config.get("diagonal_fov", 140.0)
+        self._clipping_range = config.get("clipping_range", (0.01, 100.0))
 
         # Setup an empty camera output dictionary
         self._state = {}
@@ -121,7 +122,7 @@ class MonocularCamera(GraphicalSensor):
         # Set the correct properties of the camera (this must be done after the camera object is initialized)
         self._camera.set_lens_distortion_model("OmniLensDistortionOpenCvPinholeAPI")
         self._camera.set_rational_polynomial_properties(nominal_width=self._resolution[0], nominal_height=self._resolution[1], optical_centre_x=cx, optical_centre_y=cy, max_fov=self._diagonal_fov, distortion_model=self._distortion_coefficients)
-        self._camera.set_clipping_range(0.05, 100.0)
+        self._camera.set_clipping_range(*self._clipping_range)
 
         # Check if depth is enabled, if so, set the depth properties
         if self._depth:
