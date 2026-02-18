@@ -88,6 +88,13 @@ class MonocularCamera(GraphicalSensor):
             resolution=self._resolution)
         
         # Set the camera position locally with respect to the drone
+        # QUATERNION BUG: scipy as_quat() returns [x,y,z,w] but Isaac Sim set_local_pose
+        # expects [w,x,y,z]. Values are passed as-is (no reordering), so Isaac Sim
+        # misinterprets the quaternion. Camera default look direction is +X in camera space.
+        # Combined with the bug, empirically verified orientations (ZYX Euler):
+        #   [0, -90, 0] → downward-looking   [0, 0, 0] → backward-looking
+        #   [0, 90, 0]  → upward-looking      [0, 0, 180] → forward-looking
+        # Position must clear drone geometry (Iris: use z <= -0.25 to avoid landing gear)
         self._camera.set_local_pose(np.array(self._position), Rotation.from_euler("ZYX", self._orientation, degrees=True).as_quat())
         
     def start(self):
@@ -97,6 +104,19 @@ class MonocularCamera(GraphicalSensor):
 
         # Start the camera
         self._camera.initialize()
+
+        # Set the camera FOV via focal length + aperture on the USD prim.
+        # set_rational_polynomial_properties() only configures the distortion model —
+        # it does NOT set the underlying camera's FOV.  We must set focal_length and
+        # horizontal_aperture directly so Isaac Sim renders with the correct FOV.
+        import math
+        _diag_px = math.sqrt(self._resolution[0]**2 + self._resolution[1]**2)
+        _f_px = (_diag_px / 2.0) / math.tan(math.radians(self._diagonal_fov / 2.0))
+        # Use a reference sensor width (20.955 mm is Isaac Sim's default horizontal aperture)
+        _sensor_w = 20.955
+        _f_mm = _f_px * _sensor_w / self._resolution[0]
+        self._camera.set_focal_length(_f_mm)
+        self._camera.set_horizontal_aperture(_sensor_w)
 
         # Set the correct properties of the camera (this must be done after the camera object is initialized)
         self._camera.set_lens_distortion_model("OmniLensDistortionOpenCvPinholeAPI")
@@ -109,6 +129,12 @@ class MonocularCamera(GraphicalSensor):
 
         # Signal that the camera is fully set
         self._camera_full_set = True
+
+        # Diagnostic: verify render product was created
+        rp = getattr(self._camera, '_render_product_path', None) or getattr(self._camera, 'render_product_path', None)
+        print(f"[MonocularCamera] Camera initialized: prim={self._stage_prim_path} "
+              f"res={self._resolution} fov={self._diagonal_fov}° "
+              f"render_product={rp}", flush=True)
 
     def stop(self):
         self._camera_full_set = False
@@ -147,11 +173,24 @@ class MonocularCamera(GraphicalSensor):
             self._state = {}
             self._state["camera_name"] = self._camera_name
             self._state["stage_prim_path"] = self._stage_prim_path
-            #self._state["image"] = self._camera.get_rgba()[:, :, :3]
+            rgba = self._camera.get_rgba()
+            rgb = rgba[:, :, :3]
+            self._state["image"] = rgb
             self._state["height"] = self._resolution[1]
             self._state["width"] = self._resolution[0]
             self._state["frequency"] = self._frequency
             self._state["camera"] = self._camera
+
+            # Diagnostic: check first 5 valid frames from camera
+            if self.counter < 110:
+                import numpy as _np
+                mean_val = float(_np.mean(rgb))
+                max_val = float(_np.max(rgb))
+                print(f"[MonocularCamera] Frame {self.counter}: "
+                      f"rgba={rgba.shape} rgb={rgb.shape} dtype={rgba.dtype} "
+                      f"mean={mean_val:.1f} max={max_val:.0f} "
+                      f"alpha_mean={float(_np.mean(rgba[:,:,3])):.1f} "
+                      f"{'BLACK' if max_val == 0 else 'OK'}", flush=True)
 
             # Check if we want to get the depth image
             #if self._depth:

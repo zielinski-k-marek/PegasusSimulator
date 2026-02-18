@@ -13,3 +13,5 @@ try:
 except:
     import carb
     carb.log_warn("ROS2 package not installed. ROS2Backend will not be available")
+
+from .streaming_backend import StreamingBackend, StreamingBackendConfig
